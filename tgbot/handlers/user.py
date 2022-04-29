@@ -10,6 +10,7 @@ from tgbot.keyboards import kb_user
 from tgbot.services import db
 from tgbot.services import errors
 from tgbot.services import parser
+from tgbot.services.service import create_text_position
 
 
 async def user_start(msg: Message, state: FSMContext):
@@ -30,6 +31,27 @@ async def get_search_query(msg: Message):
     except errors.BadRequestInWB:
         await msg.answer("<b>Не удалось обработать запрос</b>")
         return
+    query_info = db.fetchone(
+        table="query_info",
+        columns="query_id, scu, query_text, page, position",
+        filters={"query_text": parsed_message.query.lower(), "scu": parser.parse_message.scu}
+    )
+    if query_info:
+        kb = kb_user.kb_for_find_result(query_info["query_id"], msg.from_user.id)
+        if not index_scu:
+            text = f"<b>Артикул {parsed_message.scu} по запросу {parsed_message.query} на {page} страницах не ранжируется</b>"
+            await msg.answer(text, reply_markup=kb)
+            return
+        caption = db.fetchone("messages", "message", {"name": "caption"})
+        text_page = create_text_position(query_info["page"], page)
+        text_position = create_text_position(query_info["position"], index_scu)
+        text = f"<b>👍Артикул {query_info['scu']} по запросу {query_info['query_text']} найден</b>\n\n" \
+               f"Страница: {text_page}\nПозиция: {text_position}\n\n{caption['message'] if caption else 'Подпись'}\n\n" \
+        # text = f"<b>👍Артикул {parsed_message.scu} по запросу {parsed_message.query} найден</b>\n\n" \
+        #        f"Страница: {page}\nПозиция: {index_scu}\n\n{caption['message'] if caption else 'Подпись'}"
+        db.update("query", {"page": page, "position": index_scu}, {"query_id": query_info["query_id"]})
+        await msg.answer(text, disable_web_page_preview=True, reply_markup=kb)
+        return
     query_id = str(uuid.uuid4())
     created_at = str(datetime.now().timestamp()).split('.')[0]
     db.insert("query", {
@@ -46,6 +68,7 @@ async def get_search_query(msg: Message):
     caption = db.fetchone("messages", "message", {"name": "caption"})
     text = f"<b>👍Артикул {parsed_message.scu} по запросу {parsed_message.query} найден</b>\n\n" \
            f"Страница: {page}\nПозиция: {index_scu}\n\n{caption['message'] if caption else 'Подпись'}"
+    db.update("query", {"page": page, "position": index_scu}, {"query_id": query_id})
     await msg.answer(text, disable_web_page_preview=True, reply_markup=kb)
 
 
@@ -53,7 +76,7 @@ async def update_query(call: CallbackQuery):
     await call.answer(cache_time=60)
     callback_data = call.data.split(":")
     query_id = callback_data[1]
-    query_info = db.fetchone("query", "scu, query_text", {"query_id": query_id})
+    query_info = db.fetchone("query", "scu, query_text, page, position", {"query_id": query_id})
     if not query_info:
         await call.message.edit_text("Не удалось обновить. Повторите запрос")
         return
@@ -68,9 +91,12 @@ async def update_query(call: CallbackQuery):
                f"ранжируется</b>\n\nОбновлено: {now}"
     else:
         caption = db.fetchone("messages", "message", {"name": "caption"})
+        text_page = create_text_position(query_info["page"], page)
+        text_position = create_text_position(query_info["position"], index_scu)
         text = f"<b>👍Артикул {query_info['scu']} по запросу {query_info['query_text']} найден</b>\n\n" \
-               f"Страница: {page}\nПозиция: {index_scu}\n\n{caption['message'] if caption else 'Подпись'}\n\n" \
+               f"Страница: {text_page}\nПозиция: {text_position}\n\n{caption['message'] if caption else 'Подпись'}\n\n" \
                f"Обновлено: {now}"
+        db.update("query", {"page": page, "position": index_scu}, {"query_id": query_id})
     subscribe = db.fetchone("subscribe", "subscribe_id, scu",
             {"scu": int(query_info["scu"]), "user_id": str(call.from_user.id), "query_text": query_info["query_text"]})
     kb = kb_user.kb_for_find_result(query_id, call.from_user.id, subscribe["subscribe_id"] if subscribe else None)
@@ -81,11 +107,12 @@ async def update_query(call: CallbackQuery):
 
 
 async def subscribe(call: CallbackQuery):
+    """Хендлер на кнопку Подписаться"""
     await call.answer(cache_time=60)
     callback_data = call.data.split(":")
     query_id = callback_data[1]
     query_info = db.fetchone("query", "scu, query_text, page, position", {"query_id": query_id})
-    if not query_info:
+    if not query_info:  # Если в базе нет такого запроса
         await call.message.edit_text("Не удалось подписаться. Повторите запрос")
         return
     subscribes = db.fetchone(

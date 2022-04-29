@@ -8,20 +8,44 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from tgbot.services import db
 from tgbot.services import parser
+from tgbot.services.service import create_text_position
 from tgbot.keyboards.kb_user import kb_unsubscribe
 
 
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
 
-async def send_to_subscribe(dp: Dispatcher):
+async def update_subscribe():
     subscribes = db.fetchall(["subscribe_id", "scu", "query_text", "user_id", "page", "position"], "subscribe")
     for subscribe in subscribes:
         index_scu, page = await parser.find_position(subscribe["query_text"], subscribe["scu"])
+        db.insert(
+            table="tmp_subscribe",
+            column_values={
+                "subscribe_id": subscribe["subscribe_id"],
+                "scu": subscribe["scu"],
+                "query_text": subscribe["query_text"],
+                "user_id": subscribe["user_id"],
+                "old_page": subscribe["page"],
+                "old_position": subscribe["position"],
+                "new_page": page,
+                "new_position": index_scu if index_scu else -1 
+            }
+        )
+        await asyncio.sleep(random.randint(1, 3))
+    logging.info("Update subscribes done")
+
+
+async def send_to_subscribe(dp: Dispatcher):
+    subscribes = db.fetchall(
+        ["subscribe_id", "scu", "query_text", "user_id", "old_page",  "new_page", "old_position", "new_position"],
+        "tmp_subscribe"
+    )
+    for subscribe in subscribes:
         kb = kb_unsubscribe(subscribe["subscribe_id"])
-        if not index_scu:
-            text = f"<b>Артикул {subscribe['scu']} по запросу {subscribe['query_text']} на {page} страницах не" \
-                   f"ранжируется</b>"
+        if subscribe["new_position"] < 0:
+            text = f"<b>Артикул {subscribe['scu']} по запросу {subscribe['query_text']} на {subscribe['new_page']} " \
+                   f"страницах не ранжируется</b>"
             try:
                 await dp.bot.send_message(chat_id=subscribe["user_id"], text=text, reply_markup=kb)
             except Exception as er:
@@ -30,13 +54,20 @@ async def send_to_subscribe(dp: Dispatcher):
             continue
         caption = db.fetchone("messages", "message", {"name": "caption"})
         text = f"<b>👍Артикул {subscribe['scu']} по запросу {subscribe['query_text']} найден</b>\n\n" \
-               f"Страница: {page}\nПозиция: {index_scu}\n\n{caption['message'] if caption else 'Подпись'}"
+               f"Страница: {create_text_position(subscribe['old_page'], subscribe['new_page'])}\n" \
+               f"Позиция: {create_text_position(subscribe['old_position'], subscribe['new_position'])}\n\n" \
+               f"{caption['message'] if caption else 'Подпись'}"
         try:
             await dp.bot.send_message(chat_id=subscribe["user_id"], text=text, reply_markup=kb)
+            if subscribe["old_page"] != subscribe["new_page"] or subscribe["old_position"] != subscribe["new_position"]:
+                db.update("subscribe", {"page": subscribe["new_page"], "position": subscribe["new_position"]},
+                          {"subscribe_id": subscribe["subscribe_id"]})
         except Exception as er:
             logging.error(er)
             db.delete_subscribe(subscribe["subscribe_id"])
-        await asyncio.sleep(random.randint(2, 5))
+        await asyncio.sleep(0.5)
+    db.delete_tmp_subscribes()
+    logging.info("Send subscribe done")
 
 
 def delete_old_query():
@@ -48,6 +79,7 @@ def delete_old_query():
 
 
 def add_tasks(dp):
-    scheduler.add_job(send_to_subscribe, 'cron', day='*', hour='9', minute='30', args=[dp])
-    scheduler.add_job(delete_old_query, 'cron', day='*', hour='4', minute='00')
+    scheduler.add_job(update_subscribe, "cron", hour=8, minute=0)
+    scheduler.add_job(send_to_subscribe, "cron", hour=9, minute=30, args=[dp])
+    scheduler.add_job(delete_old_query, "cron", hour=4, minute=0)
     return scheduler

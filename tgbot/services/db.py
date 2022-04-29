@@ -98,6 +98,11 @@ def update(table: str, new_data: dict, filters: dict):
     conn.commit()
 
 
+def delete_tmp_subscribes():
+    cursor.execute("DELETE FROM tmp_subscribe")
+    conn.commit()
+
+
 def _init_db():
     """Инициализирует БД"""
     with open("db/createdb.sql", "r") as f:

@@ -24,3 +24,14 @@ create table messages(
     name varchar(50) primary key,
     message text
 );
+
+create table tmp_subscribe(
+    subscribe_id varchar(50) primary key,
+    scu integer,
+    query_text text,
+    user_id varchar(50),
+    old_page integer,
+    old_position integer,
+    new_page integer,
+    new_position integer
+);

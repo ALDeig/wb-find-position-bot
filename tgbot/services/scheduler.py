@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import random
+# import random
 from datetime import datetime
 
 from aiogram import Dispatcher
@@ -15,25 +15,68 @@ from tgbot.keyboards.kb_user import kb_unsubscribe
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
 
+async def process_update(subscribe: dict):
+    index_scu, page = await parser.find_position(subscribe["query_text"], subscribe["scu"])
+    db.insert(
+        table="tmp_subscribe",
+        column_values={
+            "subscribe_id": subscribe["subscribe_id"],
+            "scu": subscribe["scu"],
+            "query_text": subscribe["query_text"],
+            "user_id": subscribe["user_id"],
+            "old_page": subscribe["page"],
+            "old_position": subscribe["position"],
+            "new_page": page,
+            "new_position": index_scu if index_scu else -1 
+        }
+    )
+    return True
+
+
+def as_completed(max_workers: int, awaitables):
+    semaphore = asyncio.Semaphore(max_workers)
+
+    async def worker(awaitable):
+        async with semaphore:
+            return await awaitable
+
+    workers = [worker(aw) for aw in awaitables]
+    return asyncio.as_completed(workers)
+
+
 async def update_subscribe():
+    logging.info("Update subscribes start")
     subscribes = db.fetchall(["subscribe_id", "scu", "query_text", "user_id", "page", "position"], "subscribe")
-    for subscribe in subscribes:
-        index_scu, page = await parser.find_position(subscribe["query_text"], subscribe["scu"])
-        db.insert(
-            table="tmp_subscribe",
-            column_values={
-                "subscribe_id": subscribe["subscribe_id"],
-                "scu": subscribe["scu"],
-                "query_text": subscribe["query_text"],
-                "user_id": subscribe["user_id"],
-                "old_page": subscribe["page"],
-                "old_position": subscribe["position"],
-                "new_page": page,
-                "new_position": index_scu if index_scu else -1 
-            }
-        )
-        await asyncio.sleep(random.randint(1, 3))
+    max_workers = 15
+    processors = [process_update(subscribe) for subscribe in subscribes]
+    for task in as_completed(max_workers, processors):
+        await task
     logging.info("Update subscribes done")
+
+
+# async def update_subscribe():
+#     subscribes = db.fetchall(["subscribe_id", "scu", "query_text", "user_id", "page", "position"], "subscribe")
+#     amount_subscribe = len(subscribes)
+#     cnt = 1
+#     for subscribe in subscribes:
+#         logging.info(f"{cnt} in {amount_subscribe}")
+#         cnt += 1
+#         index_scu, page = await parser.find_position(subscribe["query_text"], subscribe["scu"])
+#         db.insert(
+#             table="tmp_subscribe",
+#             column_values={
+#                 "subscribe_id": subscribe["subscribe_id"],
+#                 "scu": subscribe["scu"],
+#                 "query_text": subscribe["query_text"],
+#                 "user_id": subscribe["user_id"],
+#                 "old_page": subscribe["page"],
+#                 "old_position": subscribe["position"],
+#                 "new_page": page,
+#                 "new_position": index_scu if index_scu else -1 
+#             }
+#         )
+#         # await asyncio.sleep(random.randint(1, 3))
+#     logging.info("Update subscribes done")
 
 
 async def send_to_subscribe(dp: Dispatcher):
@@ -79,7 +122,7 @@ def delete_old_query():
 
 
 def add_tasks(dp):
-    scheduler.add_job(update_subscribe, "cron", hour=8, minute=0)
+    scheduler.add_job(update_subscribe, "cron", hour=9, minute=0)
     scheduler.add_job(send_to_subscribe, "cron", hour=9, minute=30, args=[dp])
     scheduler.add_job(delete_old_query, "cron", hour=4, minute=0)
     return scheduler

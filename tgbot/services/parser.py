@@ -130,6 +130,6 @@ async def find_position(search_query: str, scu: int) -> tuple:
             index_scu = find_position_in_list(list_product_id, scu)
             if index_scu:
                 return index_scu, page
-            await asyncio.sleep(0.3)
+            # await asyncio.sleep(0.3)
         return False, 100
 

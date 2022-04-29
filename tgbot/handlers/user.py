@@ -32,9 +32,9 @@ async def get_search_query(msg: Message):
         await msg.answer("<b>Не удалось обработать запрос</b>")
         return
     query_info = db.fetchone(
-        table="query_info",
+        table="query",
         columns="query_id, scu, query_text, page, position",
-        filters={"query_text": parsed_message.query.lower(), "scu": parser.parse_message.scu}
+        filters={"query_text": parsed_message.query.lower(), "scu": parsed_message.scu}
     )
     if query_info:
         kb = kb_user.kb_for_find_result(query_info["query_id"], msg.from_user.id)

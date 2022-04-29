@@ -1,5 +1,6 @@
 env/
 .env
 db/users.db
+db/users2.db
 *__pycache__
 logs/
